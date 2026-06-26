@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>How It Works - Background Remover</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 80px 20px 40px;
+        }
+
+        .navbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .navbar h2 {
+            color: #667eea;
+            font-size: 1.5em;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 20px;
+        }
+
+        .nav-links a {
+            color: #333;
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.3s;
+        }
+
+        .nav-links a:hover {
+            color: #667eea;
+        }
+
+        .nav-links a.active {
+            color: #667eea;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 5px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 50px 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 1.1em;
+        }
+
+        .steps {
+            display: grid;
+            gap: 30px;
+        }
+
+        .step {
+            display: grid;
+            grid-template-columns: 100px 1fr;
+            gap: 20px;
+            padding: 20px;
+            background: #f8f9ff;
+            border-radius: 12px;
+            border-left: 5px solid #667eea;
+        }
+
+        .step-number {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2em;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .step-content h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+        }
+
+        .step-content p {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 10px;
+        }
+
+        .code-block {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            margin-top: 10px;
+        }
+
+        .code-block code {
+            color: #d4d4d4;
+        }
+
+        .keyword { color: #569cd6; }
+        .string { color: #ce9178; }
+        .function { color: #dcdcaa; }
+        .comment { color: #6a9955; }
+
+        .tech-stack {
+            background: #f0f2ff;
+            padding: 30px;
+            border-radius: 12px;
+            margin-top: 40px;
+        }
+
+        .tech-stack h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .tech-item {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .tech-item h4 {
+            color: #667eea;
+            margin-bottom: 8px;
+        }
+
+        .tech-item p {
+            color: #666;
+            font-size: 0.95em;
+        }
+
+        .flow-diagram {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-top: 40px;
+            text-align: center;
+            border: 2px solid #e0e0e0;
+        }
+
+        .flow-diagram h2 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .flow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .flow-item {
+            background: #f0f2ff;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: #333;
+            font-weight: 600;
+            min-width: 150px;
+        }
+
+        .flow-arrow {
+            font-size: 2em;
+            color: #667eea;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+
+            .step {
+                grid-template-columns: 1fr;
+            }
+
+            .step-number {
+                width: 60px;
+                height: 60px;
+                font-size: 1.5em;
+            }
+
+            .navbar {
+                padding: 10px 15px;
+            }
+
+            .nav-links {
+                gap: 10px;
+                font-size: 0.9em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <h2>🎨 BG Remover</h2>
+        <div class="nav-links">
+            <a href="/">Home</a>
+            <a href="/how-it-works" class="active">How It Works</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1>🔍 How It Works</h1>
+        <p class="subtitle">Understanding the background removal process</p>
+
+        <div class="steps">
+            <div class="step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <h3>Upload Your Image</h3>
+                    <p>You upload an image file from your device. Supported formats: JPG, PNG, WebP</p>
+                    <div class="code-block">
+<code><span class="comment">// File is sent to the server via multipart/form-data</span>
+POST /remove-bg
+Content-Type: multipart/form-data
+
+[image binary data]</code>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <h3>Image Processing with rembg</h3>
+                    <p>The server receives the image and uses the <strong>rembg</strong> library (powered by AI/Deep Learning) to analyze and process it.</p>
+                    <div class="code-block">
+<code><span class="keyword">from</span> <span class="string">rembg</span> <span class="keyword">import</span> <span class="function">remove</span>
+<span class="keyword">from</span> <span class="string">PIL</span> <span class="keyword">import</span> Image
+
+input_image = Image.open(file)
+output_image = <span class="function">remove</span>(input_image)</code>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <h3>AI Background Detection</h3>
+                    <p>rembg uses a pre-trained deep learning model (U-Net) to detect the foreground object and separate it from the background with high accuracy.</p>
+                    <div class="code-block">
+<code><span class="comment">// The model analyzes pixel patterns to identify:</span>
+<span class="comment">// - Subject boundaries</span>
+<span class="comment">// - Background areas</span>
+<span class="comment">// - Transparency levels (alpha channel)</span></code>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">4</div>
+                <div class="step-content">
+                    <h3>Convert to PNG with Transparency</h3>
+                    <p>The processed image is converted to PNG format with an alpha channel, making the background transparent.</p>
+                    <div class="code-block">
+<code>output_image.save(img_io, <span class="string">'PNG'</span>)
+<span class="comment">// PNG supports RGBA (transparency)</span>
+<span class="comment">// Result: Image with transparent background</span></code>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-number">5</div>
+                <div class="step-content">
+                    <h3>Download Result</h3>
+                    <p>The processed image is sent back to your browser and ready to download as a PNG file with a transparent background.</p>
+                    <div class="code-block">
+<code><span class="keyword">return</span> <span class="function">send_file</span>(img_io, 
+                         mimetype=<span class="string">'image/png'</span>,
+                         download_name=<span class="string">'no-bg.png'</span>)</code>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flow-diagram">
+            <h2>Process Flow</h2>
+            <div class="flow">
+                <div class="flow-item">📤 Upload Image</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-item">🤖 AI Analysis</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-item">🎨 Remove Background</div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-item">📥 Download PNG</div>
+            </div>
+        </div>
+
+        <div class="tech-stack">
+            <h2>🛠️ Technology Stack</h2>
+            <div class="tech-grid">
+                <div class="tech-item">
+                    <h4>rembg</h4>
+                    <p>AI-powered background removal library. Uses U-Net deep learning model.</p>
+                </div>
+                <div class="tech-item">
+                    <h4>Flask</h4>
+                    <p>Python web framework for handling HTTP requests and responses.</p>
+                </div>
+                <div class="tech-item">
+                    <h4>Pillow (PIL)</h4>
+                    <p>Image processing library for opening, manipulating, and saving images.</p>
+                </div>
+                <div class="tech-item">
+                    <h4>PyTorch</h4>
+                    <p>Deep learning framework that powers the rembg model.</p>
+                </div>
+                <div class="tech-item">
+                    <h4>HTML/CSS/JavaScript</h4>
+                    <p>Frontend interface for user interaction and image preview.</p>
+                </div>
+                <div class="tech-item">
+                    <h4>CORS</h4>
+                    <p>Enables cross-origin requests between frontend and backend.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
