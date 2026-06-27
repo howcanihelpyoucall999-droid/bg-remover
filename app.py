@@ -1,277 +1,456 @@
-from flask import Flask, request, send_file, jsonify, render_template_string
-from flask_cors import CORS
+from __future__ import annotations
+
+import base64
 import io
 import os
-import requests
-from PIL import Image
-import base64
+import traceback
+from typing import Tuple
+
+from flask import Flask, jsonify, render_template_string, request, send_file
+from flask_cors import CORS
+from PIL import Image, ImageOps
+
+# rembg is required at runtime. If it is missing, the app will still start
+# and show a helpful error from the /remove-bg endpoint.
+try:
+    from rembg import remove, new_session
+except Exception:  # pragma: no cover
+    remove = None
+    new_session = None
+
 
 app = Flask(__name__)
 CORS(app)
 
-# Simple HTML interface
-HTML_TEMPLATE = '''
+MAX_UPLOAD_MB = 10
+MAX_EDGE_PX = 2000
+DEFAULT_MODEL = os.environ.get("REMBG_MODEL", "u2net")
+
+HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Background Remover</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
-        .container { background: white; border-radius: 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.3); padding: 40px; max-width: 600px; width: 100%; }
-        h1 { text-align: center; color: #333; margin-bottom: 10px; }
-        .subtitle { text-align: center; color: #666; margin-bottom: 30px; font-size: 14px; }
-        .upload-area { border: 2px dashed #667eea; border-radius: 10px; padding: 40px 20px; text-align: center; cursor: pointer; transition: all 0.3s; margin-bottom: 20px; }
-        .upload-area:hover { border-color: #764ba2; background: #f8f9ff; }
-        .upload-area.dragover { border-color: #764ba2; background: #f0f0ff; }
-        input[type="file"] { display: none; }
-        .upload-icon { font-size: 48px; margin-bottom: 10px; }
-        .upload-text { color: #333; margin-bottom: 5px; }
-        .upload-hint { color: #999; font-size: 12px; }
-        button { width: 100%; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 20px; transition: transform 0.2s; }
-        button:hover { transform: translateY(-2px); }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .preview { display: none; margin-top: 30px; }
-        .preview-title { font-weight: bold; color: #333; margin-bottom: 10px; }
-        .preview-images { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-        .image-container { border-radius: 10px; overflow: hidden; background: #f0f0f0; }
-        .image-container img { width: 100%; height: auto; display: block; }
-        .download-btn { background: #4CAF50; margin-top: 10px; }
-        .download-btn:hover { background: #45a049; }
-        .error { color: #d32f2f; background: #ffebee; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: none; }
-        .success { color: #388e3c; background: #e8f5e9; padding: 15px; border-radius: 8px; margin-bottom: 20px; display: none; }
-        .loading { display: none; text-align: center; color: #667eea; }
-        .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #667eea; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 10px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        :root {
+            --bg1: #667eea;
+            --bg2: #764ba2;
+            --card: #ffffff;
+            --text: #1f2937;
+            --muted: #6b7280;
+            --danger: #b91c1c;
+            --danger-bg: #fef2f2;
+            --success: #166534;
+            --success-bg: #f0fdf4;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: Arial, Helvetica, sans-serif;
+            background: linear-gradient(135deg, var(--bg1), var(--bg2));
+            display: grid;
+            place-items: center;
+            padding: 20px;
+            color: var(--text);
+        }
+        .container {
+            width: min(920px, 100%);
+            background: var(--card);
+            border-radius: 24px;
+            box-shadow: 0 20px 60px rgba(0,0,0,.28);
+            padding: 28px;
+        }
+        h1 { margin: 0 0 8px; text-align: center; }
+        p.subtitle { margin: 0 0 24px; text-align: center; color: var(--muted); }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+        }
+        .upload-area {
+            border: 2px dashed #9ca3af;
+            border-radius: 18px;
+            padding: 28px;
+            text-align: center;
+            cursor: pointer;
+            transition: .2s ease;
+            background: #fafafa;
+        }
+        .upload-area:hover, .upload-area.dragover {
+            border-color: var(--bg1);
+            background: #f7f7ff;
+            transform: translateY(-1px);
+        }
+        input[type=file] { display:none; }
+        .actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        button, .button {
+            appearance: none;
+            border: 0;
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-weight: 700;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .primary { background: linear-gradient(135deg, var(--bg1), var(--bg2)); color: #fff; }
+        .secondary { background: #e5e7eb; color: #111827; }
+        .hidden { display:none; }
+        .message {
+            border-radius: 14px;
+            padding: 14px 16px;
+            margin-bottom: 16px;
+            display: none;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .error { background: var(--danger-bg); color: var(--danger); }
+        .success { background: var(--success-bg); color: var(--success); }
+        .loading { text-align:center; display:none; padding: 12px 0; color: var(--muted); }
+        .spinner {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 3px solid #e5e7eb;
+            border-top-color: var(--bg1);
+            margin: 0 auto 10px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .preview {
+            display:none;
+            gap: 16px;
+            margin-top: 8px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .panel {
+            border: 1px solid #e5e7eb;
+            border-radius: 18px;
+            overflow: hidden;
+            background: #fff;
+        }
+        .panel h3 {
+            margin: 0;
+            padding: 12px 14px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 14px;
+            color: #374151;
+        }
+        .panel img {
+            width: 100%;
+            display: block;
+            background: repeating-conic-gradient(#f3f4f6 0% 25%, #ffffff 0% 50%) 50% / 18px 18px;
+        }
+        .footer {
+            margin-top: 14px;
+            font-size: 12px;
+            color: var(--muted);
+            text-align: center;
+        }
+        @media (max-width: 700px) {
+            .preview { grid-template-columns: 1fr; }
+            .container { padding: 18px; border-radius: 18px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎨 Background Remover</h1>
-        <p class="subtitle">Upload an image and we'll remove the background instantly</p>
-        
-        <div class="error" id="error-msg"></div>
-        <div class="success" id="success-msg"></div>
-        
-        <div class="upload-area" id="upload-area">
-            <div class="upload-icon">📁</div>
-            <div class="upload-text">Click to upload or drag & drop</div>
-            <div class="upload-hint">PNG, JPG, GIF up to 10MB</div>
-            <input type="file" id="file-input" accept="image/*">
+        <h1>Background Remover</h1>
+        <p class="subtitle">Upload an image and get a PNG with transparent background.</p>
+
+        <div id="error" class="message error"></div>
+        <div id="success" class="message success"></div>
+
+        <div id="uploadArea" class="upload-area">
+            <div style="font-size:42px;">📁</div>
+            <div style="font-size:18px;font-weight:700;margin-top:6px;">Tap to upload or drag & drop</div>
+            <div style="margin-top:6px;color:#6b7280;">JPG, PNG, WEBP, BMP, GIF up to 10MB</div>
+            <input id="fileInput" type="file" accept="image/*">
         </div>
-        
-        <div class="loading" id="loading">
+
+        <div id="loading" class="loading">
             <div class="spinner"></div>
-            <p>Processing your image...</p>
+            Processing your image...
         </div>
-        
-        <div class="preview" id="preview">
-            <div class="preview-title">Original vs Result</div>
-            <div class="preview-images">
-                <div>
-                    <p style="font-size: 12px; color: #666; margin-bottom: 5px;">Original</p>
-                    <div class="image-container">
-                        <img id="original-img" src="" alt="Original">
-                    </div>
-                </div>
-                <div>
-                    <p style="font-size: 12px; color: #666; margin-bottom: 5px;">No Background</p>
-                    <div class="image-container">
-                        <img id="result-img" src="" alt="Result">
-                    </div>
-                </div>
+
+        <div id="preview" class="preview">
+            <div class="panel">
+                <h3>Original</h3>
+                <img id="originalImg" alt="Original image">
             </div>
-            <button class="download-btn" id="download-btn">⬇️ Download Result</button>
-            <button style="background: #999; margin-top: 10px;" onclick="location.reload()">Upload Another</button>
+            <div class="panel">
+                <h3>Result</h3>
+                <img id="resultImg" alt="Background removed result">
+            </div>
+        </div>
+
+        <div class="actions" style="margin-top:16px;">
+            <button id="downloadBtn" class="button primary hidden">Download PNG</button>
+            <button id="resetBtn" class="button secondary hidden">Upload Another</button>
+        </div>
+
+        <div class="footer">
+            Server health: <a href="/health" target="_blank">/health</a>
         </div>
     </div>
 
     <script>
-        const uploadArea = document.getElementById('upload-area');
-        const fileInput = document.getElementById('file-input');
-        const preview = document.getElementById('preview');
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const errorBox = document.getElementById('error');
+        const successBox = document.getElementById('success');
         const loading = document.getElementById('loading');
-        const errorMsg = document.getElementById('error-msg');
-        const successMsg = document.getElementById('success-msg');
-        const downloadBtn = document.getElementById('download-btn');
-        
+        const preview = document.getElementById('preview');
+        const originalImg = document.getElementById('originalImg');
+        const resultImg = document.getElementById('resultImg');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const resetBtn = document.getElementById('resetBtn');
+
+        let resultObjectUrl = null;
+        let currentFileName = 'no-background.png';
+
+        function showError(message) {
+            successBox.style.display = 'none';
+            errorBox.textContent = message;
+            errorBox.style.display = 'block';
+        }
+
+        function showSuccess(message) {
+            errorBox.style.display = 'none';
+            successBox.textContent = message;
+            successBox.style.display = 'block';
+        }
+
+        function clearMessages() {
+            errorBox.style.display = 'none';
+            successBox.style.display = 'none';
+        }
+
+        function cleanupResultUrl() {
+            if (resultObjectUrl) {
+                URL.revokeObjectURL(resultObjectUrl);
+                resultObjectUrl = null;
+            }
+        }
+
         uploadArea.addEventListener('click', () => fileInput.click());
-        
+
         uploadArea.addEventListener('dragover', (e) => {
             e.preventDefault();
             uploadArea.classList.add('dragover');
         });
-        
+
         uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+
         uploadArea.addEventListener('drop', (e) => {
             e.preventDefault();
             uploadArea.classList.remove('dragover');
-            fileInput.files = e.dataTransfer.files;
-            handleFile();
+            if (e.dataTransfer.files && e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                handleFile();
+            }
         });
-        
+
         fileInput.addEventListener('change', handleFile);
-        
-        function handleFile() {
+
+        resetBtn.addEventListener('click', () => location.reload());
+
+        downloadBtn.addEventListener('click', () => {
+            if (!resultObjectUrl) return;
+            const a = document.createElement('a');
+            a.href = resultObjectUrl;
+            a.download = currentFileName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+        });
+
+        async function handleFile() {
+            clearMessages();
+            cleanupResultUrl();
+
             const file = fileInput.files[0];
             if (!file) return;
-            
-            errorMsg.style.display = 'none';
-            successMsg.style.display = 'none';
-            
+
             if (!file.type.startsWith('image/')) {
-                showError('Please upload an image file');
+                showError('Please upload an image file.');
                 return;
             }
-            
+
             if (file.size > 10 * 1024 * 1024) {
-                showError('File is too large. Max 10MB');
+                showError('File too large. Maximum 10MB.');
                 return;
             }
-            
+
+            currentFileName = 'no-background.png';
+
             const reader = new FileReader();
-            reader.onload = (e) => {
-                document.getElementById('original-img').src = e.target.result;
-                processImage(file);
+            reader.onload = () => {
+                originalImg.src = reader.result;
+                preview.style.display = 'grid';
             };
             reader.readAsDataURL(file);
-        }
-        
-        function processImage(file) {
+
             loading.style.display = 'block';
-            preview.style.display = 'none';
-            
-            const formData = new FormData();
-            formData.append('image', file);
-            
-            fetch('/remove-bg', {
-                method: 'POST',
-                body: formData
-            })
-            .then(res => res.blob())
-            .then(blob => {
+            downloadBtn.classList.add('hidden');
+            resetBtn.classList.add('hidden');
+
+            try {
+                const formData = new FormData();
+                formData.append('image', file);
+
+                const response = await fetch('/remove-bg', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const contentType = response.headers.get('content-type') || '';
+
+                if (!response.ok) {
+                    let detail = 'Unknown error';
+                    if (contentType.includes('application/json')) {
+                        const data = await response.json();
+                        detail = data.error || JSON.stringify(data);
+                    } else {
+                        detail = await response.text();
+                    }
+                    throw new Error(detail);
+                }
+
+                if (!contentType.includes('image/')) {
+                    throw new Error('Server did not return an image.');
+                }
+
+                const blob = await response.blob();
+                resultObjectUrl = URL.createObjectURL(blob);
+                resultImg.src = resultObjectUrl;
+
+                showSuccess('Background removed successfully.');
+                downloadBtn.classList.remove('hidden');
+                resetBtn.classList.remove('hidden');
+            } catch (err) {
+                showError('Error: ' + err.message);
+                preview.style.display = 'none';
+            } finally {
                 loading.style.display = 'none';
-                const url = URL.createObjectURL(blob);
-                document.getElementById('result-img').src = url;
-                preview.style.display = 'block';
-                successMsg.style.display = 'block';
-                successMsg.textContent = '✓ Background removed successfully!';
-                downloadBtn.onclick = () => downloadImage(url);
-            })
-            .catch(err => {
-                loading.style.display = 'none';
-                showError('Error processing image: ' + err.message);
-            });
-        }
-        
-        function downloadImage(url) {
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'no-background.png';
-            a.click();
-        }
-        
-        function showError(msg) {
-            errorMsg.textContent = '✗ ' + msg;
-            errorMsg.style.display = 'block';
+            }
         }
     </script>
 </body>
 </html>
-'''
+"""
 
-@app.route('/')
+
+def load_rembg_session():
+    if remove is None:
+        raise RuntimeError(
+            "rembg is not installed. Add 'rembg' and 'onnxruntime' to requirements.txt and redeploy."
+        )
+    # Session is created once for performance; model name can be changed via env var.
+    return new_session(DEFAULT_MODEL)
+
+
+SESSION = None
+
+
+def get_session():
+    global SESSION
+    if SESSION is None:
+        SESSION = load_rembg_session()
+    return SESSION
+
+
+def normalize_image(image: Image.Image) -> Image.Image:
+    image = ImageOps.exif_transpose(image)
+    if image.mode not in ("RGB", "RGBA"):
+        image = image.convert("RGBA")
+    if image.width > MAX_EDGE_PX or image.height > MAX_EDGE_PX:
+        ratio = MAX_EDGE_PX / max(image.width, image.height)
+        new_size = (max(1, int(image.width * ratio)), max(1, int(image.height * ratio)))
+        image = image.resize(new_size, Image.Resampling.LANCZOS)
+    return image
+
+
+def image_to_png_bytes(image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+@app.route("/")
 def home():
     return render_template_string(HTML_TEMPLATE)
 
-@app.route('/remove-bg', methods=['POST'])
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok", "rembg_loaded": remove is not None, "model": DEFAULT_MODEL})
+
+
+@app.route("/remove-bg", methods=["POST"])
 def remove_background():
     try:
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image provided'}), 400
-        
-        file = request.files['image']
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-        
-        # Check file size
+        if "image" not in request.files:
+            return jsonify({"error": "No image provided."}), 400
+
+        file = request.files["image"]
+        if not file.filename:
+            return jsonify({"error": "No file selected."}), 400
+
         file.seek(0, os.SEEK_END)
-        file_size = file.tell()
+        size = file.tell()
         file.seek(0)
-        
-        if file_size > 10 * 1024 * 1024:
-            return jsonify({'error': 'File too large'}), 400
-        
-        # Read image
+
+        if size > MAX_UPLOAD_MB * 1024 * 1024:
+            return jsonify({"error": f"File too large. Max {MAX_UPLOAD_MB}MB."}), 400
+
         try:
             image = Image.open(file.stream)
-            if image.format not in ['JPEG', 'PNG', 'GIF', 'BMP']:
-                return jsonify({'error': 'Invalid image format'}), 400
-        except Exception as e:
-            return jsonify({'error': f'Invalid image: {str(e)}'}), 400
-        
-        # Resize if too large
-        max_size = 2000
-        if image.width > max_size or image.height > max_size:
-            ratio = max_size / max(image.width, image.height)
-            new_size = (int(image.width * ratio), int(image.height * ratio))
-            image = image.resize(new_size, Image.Resampling.LANCZOS)
-        
-        # Use Clipdrop API (free)
+            image = normalize_image(image)
+        except Exception as exc:
+            return jsonify({"error": f"Invalid image: {exc}"}), 400
+
+        original_png = image_to_png_bytes(image)
+
+        if remove is None:
+            return jsonify({
+                "error": "rembg is not installed on the server. Update requirements.txt with rembg and onnxruntime, then redeploy."
+            }), 500
+
         try:
-            img_bytes = io.BytesIO()
-            image.save(img_bytes, format='PNG')
-            img_bytes.seek(0)
-            
-            # Try Clipdrop API first (free, works great)
-            response = requests.post(
-                'https://clipdrop-api.co/remove-background/v1',
-                files={'image_file': img_bytes},
-                headers={'x-api-key': 'free'},
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                return send_file(
-                    io.BytesIO(response.content),
-                    mimetype='image/png',
-                    as_attachment=True,
-                    download_name='no-background.png'
-                )
-            
-            # If Clipdrop fails, use deepai (alternative)
-            response = requests.post(
-                'https://api.deepai.org/api/remove-background',
-                files={'image': img_bytes},
-                headers={'api-key': 'quickstart-QUickstart'},
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                if 'output_url' in result:
-                    img_response = requests.get(result['output_url'])
-                    return send_file(
-                        io.BytesIO(img_response.content),
-                        mimetype='image/png',
-                        as_attachment=True,
-                        download_name='no-background.png'
-                    )
-            
-            return jsonify({'error': 'Processing failed. Please try again.'}), 500
-        
-        except Exception as e:
-            return jsonify({'error': f'Processing error: {str(e)}'}), 500
-    
-    except Exception as e:
-        return jsonify({'error': f'Server error: {str(e)}'}), 500
+            session = get_session()
+            output = remove(original_png, session=session)
+        except Exception as exc:
+            traceback.print_exc()
+            return jsonify({
+                "error": f"Background removal failed: {exc}"
+            }), 500
 
-@app.route('/health')
-def health():
-    return jsonify({'status': 'ok'})
+        if not output:
+            return jsonify({"error": "No output was generated."}), 500
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(debug=False, host='0.0.0.0', port=port)
+        return send_file(
+            io.BytesIO(output),
+            mimetype="image/png",
+            as_attachment=True,
+            download_name="no-background.png",
+            max_age=0,
+        )
+
+    except Exception as exc:
+        traceback.print_exc()
+        return jsonify({"error": f"Server error: {exc}"}), 500
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=False)
